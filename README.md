@@ -32,6 +32,21 @@ Files are numbered in album order. Videos are fetched as the seller's original u
 
 Be sensible: this is for downloading albums you have a legitimate reason to keep. Don't hammer the site — the script downloads sequentially on purpose.
 
+## Store-scale pipeline
+
+For downloading a whole store rather than one album, two more scripts split the job into an index phase and a download phase (these two need `pip install -r requirements.txt`; the single-album scraper stays stdlib-only):
+
+```
+python3 yupoo_manifest.py "https://STORE.x.yupoo.com"            # -> manifest.parquet
+python3 yupoo_download.py manifest.parquet --size big            # -> photos_big/ALBUM_ID/
+```
+
+`yupoo_manifest.py` crawls the store's album index into an append-only Parquet file keyed on `album_id`, with the title split into SKU and date columns. The index is sorted newest-first, so re-running it is cheap: it stops at the first page with no unseen albums, adding only what's new. `--full` recrawls everything and refreshes photo counts.
+
+`yupoo_download.py` walks the manifest and downloads each album's photos (videos are skipped) at the size you pick — `small`, `medium`, `big` (810×1080, ~330 KB, the default) or `origin` (full resolution, ~10× bigger). Traffic is shaped like a person browsing: a small concurrent burst per album, a jittered pause between albums, and a long cooldown if the server ever pushes back. State lives on disk (`ALBUM_ID/album.json`), so the run is idempotent and resumable — kill it any time, re-run, and it refetches only what's missing. `--max-albums` and `--max-hours` let you run it in nightly chunks.
+
+Rough numbers from a 5,600-album store: the full manifest crawl is 47 requests (~1 minute); the download is ~110k requests, an overnight run at default pacing, ~35 GB at `big`.
+
 ## Why this exists
 
 The GitHub repo named `Yupoo-Scraper` that ranks well in search contains no code — it's an advertisement for a paid cloud scraper billed per image. This one is the actual scraper.
