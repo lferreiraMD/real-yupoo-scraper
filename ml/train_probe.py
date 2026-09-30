@@ -25,6 +25,7 @@ import sys
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import GroupKFold, cross_val_predict
 
@@ -52,6 +53,9 @@ def main():
                         help="target precision of the auto-accept band")
     parser.add_argument("--reject-npv", type=float, default=0.995,
                         help="target purity of the auto-reject band")
+    parser.add_argument("--clf", choices=("logreg", "svm"), default="logreg",
+                        help="probe type: logistic regression or RBF-kernel SVM "
+                             "(svm scores are margins; rely on CV calibration)")
     parser.add_argument("--C", type=float, default=1.0,
                         help="logistic-regression inverse regularization")
     parser.add_argument("--lume", choices=("exclude", "no"), default="exclude",
@@ -81,15 +85,21 @@ def main():
     print(f"{len(idx)} embedded photos; {len(merged)} labeled "
           f"({y.sum()} yes / {(~y).sum()} no) across {n_albums} albums")
 
-    clf = LogisticRegression(max_iter=2000, class_weight="balanced", C=args.C)
+    if args.clf == "svm":
+        clf = SVC(kernel="rbf", gamma="scale", C=args.C, class_weight="balanced")
+        method = "decision_function"
+    else:
+        clf = LogisticRegression(max_iter=2000, class_weight="balanced", C=args.C)
+        method = "predict_proba"
     n_folds = min(5, n_albums)
     lo, hi = args.reject, args.accept
     if n_folds >= 2:
         proba = cross_val_predict(clf, X, y, groups=groups,
-                                  cv=GroupKFold(n_splits=n_folds),
-                                  method="predict_proba")[:, 1]
+                                  cv=GroupKFold(n_splits=n_folds), method=method)
+        if proba.ndim == 2:
+            proba = proba[:, 1]
         auc = roc_auc_score(y, proba)
-        acc = ((proba >= 0.5) == y).mean()
+        acc = ((proba >= (0.5 if method == "predict_proba" else 0.0)) == y).mean()
         print(f"album-grouped {n_folds}-fold CV:  AUC {auc:.4f}   "
               f"accuracy@0.5 {acc:.4f}")
         # With few labels the ranking is far better than the calibration, so
@@ -112,7 +122,8 @@ def main():
         print("warning: <2 albums with labels — skipping cross-validation")
 
     clf.fit(X, y)
-    scores = clf.predict_proba(emb)[:, 1]
+    scores = (clf.predict_proba(emb)[:, 1] if method == "predict_proba"
+              else clf.decision_function(emb))
     out = args.out or os.path.join(args.emb_dir, "probe_scores.parquet")
     pd.DataFrame({"path": idx.path, "album_id": idx.album_id,
                   "score": scores.astype(np.float32)}).to_parquet(out, index=False)
