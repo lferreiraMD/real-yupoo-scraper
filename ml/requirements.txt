@@ -1,0 +1,9 @@
+# Pinned for Pascal-era GPUs (compute capability 6.1, e.g. GTX 1050 Ti):
+# torch 2.4.x PyPI wheels still ship sm_61 kernels; newest wheels may not.
+torch==2.4.1
+torchvision==0.19.1
+transformers>=4.56
+pillow
+numpy
+pandas
+pyarrow
