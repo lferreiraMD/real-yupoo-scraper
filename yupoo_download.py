@@ -100,7 +100,9 @@ def process_album(row, out_dir, size, concurrency):
         "items_on_page": len(items),
         "photos_expected": len(photos),
         "photos_ok": n_ok,
-        "complete": n_ok == len(photos) and len(photos) > 0,
+        # videos-only albums (photos empty, items not) complete trivially;
+        # a page that parsed zero items of any kind stays incomplete
+        "complete": n_ok == len(photos) and len(items) > 0,
         "photos": [
             {"file": os.path.basename(dest), "src": item["src"],
              "alt": item.get("alt"), "ok": ok, "bytes": nbytes}
