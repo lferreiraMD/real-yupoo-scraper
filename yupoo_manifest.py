@@ -14,7 +14,12 @@ albums keep their rows, distinguishable by a stale last_seen. --full recrawls
 every page, refreshing last_seen and photo_count on all rows.
 
 Columns: album_id, url, title, sku, date_label, guessed_date, photo_count,
-cover_url, first_seen, last_seen.
+cover_url, first_seen, last_seen, delisted_at.
+
+Stores purge old listings. A --full recrawl stamps delisted_at on every row
+absent from the live index (keeping the earliest such observation), so the
+manifest itself records what vanished and when; incremental runs cannot see
+absence and leave the column untouched.
 """
 
 import argparse
@@ -147,14 +152,27 @@ def main():
                 df.loc[seen_mask, col] = df.loc[seen_mask, "album_id"].map(
                     lambda a: seen_cards[a][col]
                 )
+            # absence from a full crawl means the store delisted the album;
+            # keep the earliest observation, clear it if one ever reappears
+            if "delisted_at" not in df.columns:
+                df["delisted_at"] = pd.Series(
+                    pd.NaT, index=df.index, dtype="datetime64[ns, UTC]")
+            newly_gone = ~seen_mask & df["delisted_at"].isna()
+            df.loc[newly_gone, "delisted_at"] = now
+            df.loc[seen_mask, "delisted_at"] = pd.NaT
     if new_rows:
         df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
     if df.empty:
         sys.exit("error: no albums found — wrong URL, or the store markup changed.")
+    if "delisted_at" not in df.columns:
+        df["delisted_at"] = pd.NaT
+    df["delisted_at"] = pd.to_datetime(df["delisted_at"], utc=True)
     df = df.sort_values("album_id", ascending=False).reset_index(drop=True)
     df.to_parquet(args.manifest, index=False)
-    print(f"{args.manifest}: {len(new_rows)} new, {len(df)} albums total")
+    n_gone = df["delisted_at"].notna().sum()
+    print(f"{args.manifest}: {len(new_rows)} new, {len(df)} albums total"
+          + (f", {n_gone} delisted" if n_gone else ""))
 
 
 if __name__ == "__main__":
