@@ -72,6 +72,12 @@ def process_album(row, out_dir, size, concurrency):
         try:
             page_html = fetch_text(f"{referer}?uid=1", referer)
             break
+        except urllib.error.HTTPError as e:
+            if e.code < 500 and e.code != 429:
+                raise  # 404 and friends are permanent — a delisted album
+            if attempt == 2:
+                raise
+            time.sleep(5 * (attempt + 1))
         except Exception:
             if attempt == 2:
                 raise
