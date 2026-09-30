@@ -68,7 +68,14 @@ def process_album(row, out_dir, size, concurrency):
     album_dir = os.path.join(out_dir, str(row.album_id))
     os.makedirs(album_dir, exist_ok=True)
 
-    page_html = fetch_text(f"{referer}?uid=1", referer)
+    for attempt in range(3):  # album pages throw the occasional transient 500
+        try:
+            page_html = fetch_text(f"{referer}?uid=1", referer)
+            break
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(5 * (attempt + 1))
     title, items = parse_page(page_html)
     photos = [i for i in items if i["type"] == "photo"]
 
