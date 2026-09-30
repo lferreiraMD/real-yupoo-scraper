@@ -93,7 +93,10 @@ def main():
     device = pick_device(args.device)
     print(f"model {args.model} on {device} "
           f"(torch {torch.__version__})", flush=True)
-    processor = AutoImageProcessor.from_pretrained(args.model)
+    try:  # the fast (torchvision) processor helps when CPU preprocessing bottlenecks
+        processor = AutoImageProcessor.from_pretrained(args.model, use_fast=True)
+    except Exception:
+        processor = AutoImageProcessor.from_pretrained(args.model)
     model = AutoModel.from_pretrained(args.model).to(device).eval()
     n_register = getattr(model.config, "num_register_tokens", 0)
 

@@ -2,7 +2,8 @@
 # torch 2.4.x PyPI wheels still ship sm_61 kernels; newest wheels may not.
 torch==2.4.1
 torchvision==0.19.1
-transformers>=4.56
+# transformers 5.x needs torch>=2.5, which breaks the Pascal pin above
+transformers>=4.56,<5
 pillow
 numpy
 pandas
