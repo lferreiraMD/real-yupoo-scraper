@@ -6,3 +6,7 @@ manifest.parquet
 photos_*/
 embeddings/
 labels.csv
+audit_*.csv
+lume_labels.csv
+audit_paths.txt
+dial_set.parquet
