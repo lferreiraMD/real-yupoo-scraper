@@ -116,7 +116,15 @@ def main():
     page = 0
     while True:
         page += 1
-        cards = parse_index_page(fetch_text(f"{referer}?page={page}", referer), store)
+        for attempt in range(3):  # index pages throw the occasional transient 500
+            try:
+                page_html = fetch_text(f"{referer}?page={page}", referer)
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                time.sleep(3 * (attempt + 1))
+        cards = parse_index_page(page_html, store)
         if not cards:
             break
         fresh = [c for c in cards if c["album_id"] not in known and c["album_id"] not in seen_cards]
@@ -126,7 +134,7 @@ def main():
             c["guessed_date"] = guess_date(c["date_label"], now)
             c["first_seen"] = c["last_seen"] = now
             new_rows.append(c)
-        print(f"page {page}: {len(cards)} albums, {len(fresh)} new")
+        print(f"page {page}: {len(cards)} albums, {len(fresh)} new", flush=True)
         if not fresh and not args.full:
             break
         time.sleep(random.uniform(0.6, 1.4))

@@ -182,11 +182,12 @@ def main():
         try:
             dest, size = download_item(index, item, referer, out_dir)
             print(f"  [{index:03d}/{len(items)}] {item['type']:5s} "
-                  f"{os.path.basename(dest)}  ({size / 1e6:.2f} MB)")
+                  f"{os.path.basename(dest)}  ({size / 1e6:.2f} MB)", flush=True)
             manifest["items"].append({**item, "file": os.path.basename(dest), "bytes": size})
         except Exception as e:
             failures += 1
-            print(f"  [{index:03d}/{len(items)}] {item['type']:5s} FAILED: {e}")
+            print(f"  [{index:03d}/{len(items)}] {item['type']:5s} FAILED: {e}",
+                  flush=True)
             manifest["items"].append({**item, "error": str(e)})
 
     with open(os.path.join(out_dir, "album.json"), "w", encoding="utf-8") as f:

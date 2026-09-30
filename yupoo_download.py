@@ -145,14 +145,15 @@ def main():
                     row, out_dir, args.size, args.concurrency)
             except Exception as e:
                 n_ok, n_bad, rate_limited = 0, -1, False
-                print(f"  {row.album_id} ({row.title}): album page failed: {e}")
+                print(f"  {row.album_id} ({row.title}): album page failed: {e}",
+                      flush=True)
                 break
             print(f"  {row.album_id} ({row.title}): {n_ok} photos"
-                  + (f", {n_bad} FAILED" if n_bad else ""))
+                  + (f", {n_bad} FAILED" if n_bad else ""), flush=True)
             if not rate_limited:
                 break
             print(f"  rate limited — cooling down {COOLDOWN_SECONDS}s "
-                  f"(attempt {attempt}/2)")
+                  f"(attempt {attempt}/2)", flush=True)
             time.sleep(COOLDOWN_SECONDS)
         processed += 1
         failures += 1 if n_bad else 0
