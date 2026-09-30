@@ -102,6 +102,9 @@ def main():
                         help="manifest file to create or update (default: manifest.parquet)")
     parser.add_argument("--full", action="store_true",
                         help="recrawl every index page instead of stopping at known albums")
+    parser.add_argument("--trust-purge", action="store_true",
+                        help="stamp delistings even when a large fraction of "
+                             "the store vanishes in one --full crawl")
     args = parser.parse_args()
 
     m = STORE_RE.match(args.store_url.strip())
@@ -121,15 +124,19 @@ def main():
     page = 0
     while True:
         page += 1
-        for attempt in range(3):  # index pages throw the occasional transient 500
+        cards = None
+        for attempt in range(3):  # transient 500s, and 200s with truncated markup
             try:
                 page_html = fetch_text(f"{referer}?page={page}", referer)
-                break
+                cards = parse_index_page(page_html, store)
             except Exception:
                 if attempt == 2:
                     raise
                 time.sleep(3 * (attempt + 1))
-        cards = parse_index_page(page_html, store)
+                continue
+            if cards:
+                break
+            time.sleep(2)  # empty parse: retry before trusting it as end-of-store
         if not cards:
             break
         fresh = [c for c in cards if c["album_id"] not in known and c["album_id"] not in seen_cards]
@@ -158,7 +165,17 @@ def main():
                 df["delisted_at"] = pd.Series(
                     pd.NaT, index=df.index, dtype="datetime64[ns, UTC]")
             newly_gone = ~seen_mask & df["delisted_at"].isna()
-            df.loc[newly_gone, "delisted_at"] = now
+            alive_before = int(df["delisted_at"].isna().sum())
+            # circuit breaker: a truncated crawl would look like a mass
+            # extinction — refuse to stamp it, a later clean crawl catches up
+            if (not args.trust_purge
+                    and int(newly_gone.sum()) > max(20, int(0.2 * alive_before))):
+                print(f"warning: {int(newly_gone.sum())} of {alive_before} "
+                      "alive albums vanished in one crawl — index may be "
+                      "truncated; NOT stamping delisted_at. If the purge is "
+                      "real, re-run with --trust-purge.", flush=True)
+            else:
+                df.loc[newly_gone, "delisted_at"] = now
             df.loc[seen_mask, "delisted_at"] = pd.NaT
     if new_rows:
         df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
