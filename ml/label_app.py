@@ -76,17 +76,21 @@ class State:
             with open(self.labels_path, newline="") as f:
                 for row in csv.DictReader(f):  # append-only log: last row wins
                     self.labeled[row["path"]] = row["label"]
-        by_album = {}
-        for p in glob.glob(os.path.join(self.root, "*", "*.jp*g")):
-            rel = os.path.relpath(p, self.root)
-            by_album.setdefault(rel.split(os.sep)[0], []).append(rel)
-        rng = random.Random(42)
-        queue = []
-        for album in sorted(by_album):
-            photos = sorted(by_album[album])
-            rng.shuffle(photos)
-            queue.extend(photos[: args.per_album])
-        rng.shuffle(queue)
+        if args.paths:
+            with open(args.paths) as f:
+                queue = [line.strip() for line in f if line.strip()]
+        else:
+            by_album = {}
+            for p in glob.glob(os.path.join(self.root, "*", "*.jp*g")):
+                rel = os.path.relpath(p, self.root)
+                by_album.setdefault(rel.split(os.sep)[0], []).append(rel)
+            rng = random.Random(42)
+            queue = []
+            for album in sorted(by_album):
+                photos = sorted(by_album[album])
+                rng.shuffle(photos)
+                queue.extend(photos[: args.per_album])
+            rng.shuffle(queue)
         self.queue = queue
         self.queue_set = set(queue)
 
@@ -176,6 +180,9 @@ def main():
     parser.add_argument("--question", default="Is the watch dial clearly visible?")
     parser.add_argument("--per-album", type=int, default=2,
                         help="photos sampled per album (default: 2)")
+    parser.add_argument("--paths", default=None,
+                        help="file of photo paths (one per line) to use as the "
+                             "queue verbatim — audit mode, overrides sampling")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
 
