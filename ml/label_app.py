@@ -4,7 +4,7 @@
     python3 ml/label_app.py photos_big --question "Is the dial clearly visible?"
 
 Then open http://127.0.0.1:8765 and use the keyboard:
-    Y = yes    N = no    U = unsure    Z = undo last
+    Y = yes    N = no    L = lume shot    U = unsure    Z = undo last
 
 Labels append to --labels (CSV: path,label,ts). Restart-safe: already-labeled
 paths are skipped. Sampling is stratified — up to --per-album photos from each
@@ -30,7 +30,7 @@ PAGE = """<!doctype html><meta charset="utf-8"><title>labeler</title>
  kbd{background:#333;border-radius:4px;padding:1px 6px;margin:0 2px}
 </style>
 <div id="q"></div><img id="img"><div id="bar"></div>
-<div><kbd>Y</kbd> yes <kbd>N</kbd> no <kbd>U</kbd> unsure <kbd>Z</kbd> undo</div>
+<div><kbd>Y</kbd> yes <kbd>N</kbd> no <kbd>L</kbd> lume <kbd>U</kbd> unsure <kbd>Z</kbd> undo</div>
 <script>
 let cur=null;
 async function next(){
@@ -48,6 +48,7 @@ async function undo(){ await fetch('/undo',{method:'POST'}); next(); }
 document.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
   if(k==='y')send('yes'); else if(k==='n')send('no');
+  else if(k==='l')send('lume');
   else if(k==='u')send('unsure'); else if(k==='z')undo();});
 next();
 </script>"""
@@ -149,7 +150,7 @@ def make_handler(state):
             body = self.rfile.read(length).decode() if length else "{}"
             if self.path == "/label":
                 req = json.loads(body)
-                if req.get("label") in ("yes", "no", "unsure") and req.get("path"):
+                if req.get("label") in ("yes", "no", "lume", "unsure") and req.get("path"):
                     state.label(req["path"], req["label"])
                 self._json({"ok": True})
             elif self.path == "/undo":

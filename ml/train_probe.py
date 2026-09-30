@@ -4,7 +4,10 @@
     python3 ml/train_probe.py embeddings/dinov2-base labels.csv
     python3 ml/train_probe.py embeddings/dinov3-vitb16-pretrain-lvd1689m labels.csv
 
-Labels come from label_app.py ("yes"/"no" rows; "unsure" is ignored).
+Labels come from label_app.py: "yes"/"no" train the probe, "unsure" is
+ignored, and "lume" (dial visible but glowing in the dark) is excluded by
+default so it neither pollutes the positives nor distorts the negative
+boundary — pass --lume no to fold lume shots into the negative class.
 Embeddings are L2-normalized float32 before fitting. Validation is
 album-grouped cross-validation — photos of one album never straddle the
 train/validation split, which would leak (bursts are near-duplicates).
@@ -43,12 +46,20 @@ def main():
     parser.add_argument("labels_csv", help="labels.csv from label_app.py")
     parser.add_argument("--accept", type=float, default=0.9)
     parser.add_argument("--reject", type=float, default=0.1)
+    parser.add_argument("--lume", choices=("exclude", "no"), default="exclude",
+                        help="lume labels: 'exclude' from training (default) "
+                             "or fold into the 'no' class")
     parser.add_argument("--out", default=None,
                         help="scores output (default: EMB_DIR/probe_scores.parquet)")
     args = parser.parse_args()
 
     idx, emb = load_embeddings(args.emb_dir)
     labels = pd.read_csv(args.labels_csv)
+    n_lume = (labels.label == "lume").sum()
+    if args.lume == "no":
+        labels.loc[labels.label == "lume", "label"] = "no"
+    elif n_lume:
+        print(f"{n_lume} lume labels excluded from training (--lume no to include)")
     labels = labels[labels.label.isin(["yes", "no"])]
     merged = idx.reset_index().merge(labels, on="path")
     if merged.label.nunique() < 2:
