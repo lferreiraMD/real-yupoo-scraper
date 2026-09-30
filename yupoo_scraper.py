@@ -42,19 +42,30 @@ def fetch_text(url, referer):
 
 
 def fetch_file(url, referer, dest, retries=2):
-    """Download url to dest, returning the byte count. Raises on final failure."""
+    """Download url to dest, returning the byte count. Raises on final failure.
+
+    A connection the server closes early reads exactly like end-of-stream,
+    so the byte count is checked against Content-Length, and the write goes
+    through a .part file renamed only on success — a truncated download can
+    neither be saved as done nor be mistaken for one by resume checks."""
+    part = dest + ".part"
     for attempt in range(retries + 1):
         try:
-            with http_open(url, referer) as r, open(dest, "wb") as f:
+            with http_open(url, referer) as r, open(part, "wb") as f:
+                expected = r.headers.get("Content-Length")
                 while True:
                     chunk = r.read(1 << 16)
                     if not chunk:
                         break
                     f.write(chunk)
-            return os.path.getsize(dest)
+            size = os.path.getsize(part)
+            if expected is not None and size != int(expected):
+                raise IOError(f"truncated: {size} of {expected} bytes")
+            os.replace(part, dest)
+            return size
         except Exception:
-            if os.path.exists(dest):
-                os.remove(dest)
+            if os.path.exists(part):
+                os.remove(part)
             if attempt == retries:
                 raise
             time.sleep(1 + attempt)
