@@ -44,8 +44,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("emb_dir", help="embeddings directory (chunk_* files)")
     parser.add_argument("labels_csv", help="labels.csv from label_app.py")
-    parser.add_argument("--accept", type=float, default=0.9)
-    parser.add_argument("--reject", type=float, default=0.1)
+    parser.add_argument("--accept", type=float, default=0.9,
+                        help="fallback accept threshold when CV can't calibrate")
+    parser.add_argument("--reject", type=float, default=0.1,
+                        help="fallback reject threshold when CV can't calibrate")
+    parser.add_argument("--accept-precision", type=float, default=0.99,
+                        help="target precision of the auto-accept band")
+    parser.add_argument("--reject-npv", type=float, default=0.995,
+                        help="target purity of the auto-reject band")
+    parser.add_argument("--C", type=float, default=1.0,
+                        help="logistic-regression inverse regularization")
     parser.add_argument("--lume", choices=("exclude", "no"), default="exclude",
                         help="lume labels: 'exclude' from training (default) "
                              "or fold into the 'no' class")
@@ -73,8 +81,9 @@ def main():
     print(f"{len(idx)} embedded photos; {len(merged)} labeled "
           f"({y.sum()} yes / {(~y).sum()} no) across {n_albums} albums")
 
-    clf = LogisticRegression(max_iter=2000, class_weight="balanced")
+    clf = LogisticRegression(max_iter=2000, class_weight="balanced", C=args.C)
     n_folds = min(5, n_albums)
+    lo, hi = args.reject, args.accept
     if n_folds >= 2:
         proba = cross_val_predict(clf, X, y, groups=groups,
                                   cv=GroupKFold(n_splits=n_folds),
@@ -83,6 +92,22 @@ def main():
         acc = ((proba >= 0.5) == y).mean()
         print(f"album-grouped {n_folds}-fold CV:  AUC {auc:.4f}   "
               f"accuracy@0.5 {acc:.4f}")
+        # With few labels the ranking is far better than the calibration, so
+        # derive triage thresholds from the CV scores: the loosest cutoffs
+        # that keep the accept band pure and the reject band clean.
+        desc = np.argsort(-proba)
+        prec = np.cumsum(y[desc]) / np.arange(1, len(y) + 1)
+        ok = np.nonzero(prec >= args.accept_precision)[0]
+        if ok.size:
+            hi = float(proba[desc[ok.max()]])
+        asc = np.argsort(proba)
+        npv = np.cumsum(~y[asc]) / np.arange(1, len(y) + 1)
+        ok = np.nonzero(npv >= args.reject_npv)[0]
+        if ok.size:
+            lo = float(proba[asc[ok.max()]])
+        print(f"calibrated thresholds from CV: accept>={hi:.3f} "
+              f"(precision {args.accept_precision}), reject<={lo:.3f} "
+              f"(purity {args.reject_npv})")
     else:
         print("warning: <2 albums with labels — skipping cross-validation")
 
@@ -92,7 +117,6 @@ def main():
     pd.DataFrame({"path": idx.path, "album_id": idx.album_id,
                   "score": scores.astype(np.float32)}).to_parquet(out, index=False)
 
-    lo, hi = args.reject, args.accept
     n = len(scores)
     print(f"triage at reject<={lo}, accept>={hi}:")
     print(f"  auto-accept: {(scores >= hi).sum():6d}  ({(scores >= hi).mean():5.1%})")

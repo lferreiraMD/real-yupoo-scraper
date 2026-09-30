@@ -119,7 +119,7 @@ def main():
     except FileNotFoundError:
         df, known = pd.DataFrame(), set()
 
-    now = pd.Timestamp.utcnow().floor("s")
+    now = pd.Timestamp.now("UTC").floor("s")
     new_rows, seen_cards = [], {}
     page = 0
     while True:
