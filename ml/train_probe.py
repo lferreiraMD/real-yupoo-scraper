@@ -55,6 +55,8 @@ def main():
 
     idx, emb = load_embeddings(args.emb_dir)
     labels = pd.read_csv(args.labels_csv)
+    # the labeler's CSV is an append-only log; the last row per path wins
+    labels = labels.drop_duplicates(subset="path", keep="last")
     n_lume = (labels.label == "lume").sum()
     if args.lume == "no":
         labels.loc[labels.label == "lume", "label"] = "no"
