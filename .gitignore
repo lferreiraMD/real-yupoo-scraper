@@ -24,3 +24,5 @@ album_watches.parquet
 *.before-sync
 *_labels.csv
 *_paths.txt
+best_dial_final.csv
+best_photos/
