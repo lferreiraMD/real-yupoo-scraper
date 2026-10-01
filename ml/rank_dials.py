@@ -120,13 +120,16 @@ def main():
     boxes = load_boxes(args.boxes)
     f = photos.merge(boxes.drop(columns="album_id"), on="path")
     missing = len(photos) - len(f)
+    # only rank albums whose every dial photo has a box; a partial album could
+    # crown a photo only because its better sibling was not processed yet
+    complete = photos.groupby("album_id").size() == f.groupby("album_id").size().reindex(
+        photos.album_id.unique(), fill_value=0)
+    f = f[f.album_id.isin(complete[complete].index)]
     f = score(features(f), w, args.min_det, args.sharpness)
     f.sort_values(["album_id", "rank"]).to_parquet(args.out, index=False)
 
-    albums = photos.album_id.nunique()
-    covered = f.album_id.nunique()
-    print(f"{len(f)} dial photos scored in {covered} albums "
-          f"({missing} dial photos without a box yet; {albums - covered} albums not covered)")
+    print(f"{len(f)} dial photos scored in {complete.sum()} complete albums "
+          f"({missing} dial photos without a box yet; {(~complete).sum()} albums held back)")
     print(f"flags: {f.cut.sum()} boxes touch the border, {(f.det_score < args.min_det).sum()} below det_score {args.min_det}")
 
     best = f[f["rank"] == 1].set_index("album_id")
