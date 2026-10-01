@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+.DS_Store
+venv-py
 # downloaded albums
 *_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]/
 manifest.parquet
@@ -10,3 +12,8 @@ audit_*.csv
 lume_labels.csv
 audit_paths.txt
 dial_set.parquet
+dial_set_svm.parquet
+photos_dial.parquet
+album_dials.parquet
+*_labels.csv
+*_paths.txt

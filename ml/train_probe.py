@@ -3,11 +3,17 @@
 
     python3 ml/train_probe.py embeddings/dinov2-base labels.csv
     python3 ml/train_probe.py embeddings/dinov3-vitb16-pretrain-lvd1689m labels.csv
+    python3 ml/train_probe.py embeddings/dinov2-base labels.csv audit_accepts.csv \\
+        --target lume --clf svm --out embeddings/dinov2-base/lume_svm_scores.parquet
 
 Labels come from label_app.py: "yes"/"no" train the probe, "unsure" is
 ignored, and "lume" (dial visible but glowing in the dark) is excluded by
 default so it neither pollutes the positives nor distorts the negative
 boundary — pass --lume no to fold lume shots into the negative class.
+Several label logs can be given; they are merged by timestamp, last row
+per path wins. --target lume trains the lume gate instead: "lume" is the
+positive class and every "yes"/"no" photo is a negative. --holdout names a
+file of paths (one per line) kept out of training, e.g. an audit sample.
 Embeddings are L2-normalized float32 before fitting. Validation is
 album-grouped cross-validation — photos of one album never straddle the
 train/validation split, which would leak (bursts are near-duplicates).
@@ -44,7 +50,11 @@ def load_embeddings(emb_dir):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("emb_dir", help="embeddings directory (chunk_* files)")
-    parser.add_argument("labels_csv", help="labels.csv from label_app.py")
+    parser.add_argument("labels_csv", nargs="+", help="label logs from label_app.py")
+    parser.add_argument("--target", choices=("dial", "lume"), default="dial",
+                        help="dial: yes vs no (default); lume: lume vs yes/no")
+    parser.add_argument("--holdout", default=None,
+                        help="file of photo paths to keep out of training")
     parser.add_argument("--accept", type=float, default=0.9,
                         help="fallback accept threshold when CV can't calibrate")
     parser.add_argument("--reject", type=float, default=0.1,
@@ -66,14 +76,24 @@ def main():
     args = parser.parse_args()
 
     idx, emb = load_embeddings(args.emb_dir)
-    labels = pd.read_csv(args.labels_csv)
+    labels = pd.concat([pd.read_csv(p) for p in args.labels_csv], ignore_index=True)
     # the labeler's CSV is an append-only log; the last row per path wins
-    labels = labels.drop_duplicates(subset="path", keep="last")
-    n_lume = (labels.label == "lume").sum()
-    if args.lume == "no":
-        labels.loc[labels.label == "lume", "label"] = "no"
-    elif n_lume:
-        print(f"{n_lume} lume labels excluded from training (--lume no to include)")
+    labels = labels.sort_values("ts", kind="stable").drop_duplicates(subset="path", keep="last")
+    if args.holdout:
+        with open(args.holdout) as f:
+            held = {line.strip() for line in f if line.strip()}
+        n_held = labels.path.isin(held).sum()
+        labels = labels[~labels.path.isin(held)]
+        print(f"{n_held} labeled photos held out ({len(held)} paths in {args.holdout})")
+    if args.target == "lume":
+        labels = labels[labels.label.isin(["yes", "no", "lume"])].copy()
+        labels["label"] = np.where(labels.label == "lume", "yes", "no")
+    else:
+        n_lume = (labels.label == "lume").sum()
+        if args.lume == "no":
+            labels.loc[labels.label == "lume", "label"] = "no"
+        elif n_lume:
+            print(f"{n_lume} lume labels excluded from training (--lume no to include)")
     labels = labels[labels.label.isin(["yes", "no"])]
     merged = idx.reset_index().merge(labels, on="path")
     if merged.label.nunique() < 2:
@@ -82,8 +102,9 @@ def main():
     y = (merged.label == "yes").to_numpy()
     groups = merged.album_id.to_numpy()
     n_albums = len(set(groups))
+    pos = "lume" if args.target == "lume" else "yes"
     print(f"{len(idx)} embedded photos; {len(merged)} labeled "
-          f"({y.sum()} yes / {(~y).sum()} no) across {n_albums} albums")
+          f"({y.sum()} {pos} / {(~y).sum()} not) across {n_albums} albums")
 
     if args.clf == "svm":
         clf = SVC(kernel="rbf", gamma="scale", C=args.C, class_weight="balanced")
