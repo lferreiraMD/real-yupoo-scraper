@@ -13,15 +13,19 @@ the same way, so fixes are just newer rows. Restart-safe; sampling is
 stratified (--per-album per album) and shuffled with a fixed seed, so the
 queue order is stable across restarts.
 
-Pick mode shows all candidate photos of one album side by side and records
-the best one (rank_dials.py --pick-queue writes such a queue):
+Pick mode shows the candidate photos of one watch side by side and records
+the best one — or several, when the screen turns out to hold more than one
+watch (split_watches.py --pick-queue writes such a queue):
 
     python3 ml/label_app.py photos_big --pick --paths pick_paths.txt --labels pick_labels.csv
 
-Consecutive paths from the same album form one screen. Keys: 1-9 (and 0 for
-the 10th) or a click picks a photo, N = none of them shows the dial readably,
-U = unsure; arrows/Z/F navigate as above. Each pick is logged as
-(path,best,ts); N and U are logged as (ALBUM_ID/,none|unsure,ts).
+Queue lines are "path<TAB>screen" (or bare paths, grouped by album);
+consecutive lines with the same screen form one screen. Keys: 1-9 (and 0 for
+the 10th) or a click toggle a photo, W (or Enter) writes the selection, N = none of
+them shows the dial readably, U = unsure; arrows/Z/F navigate as above. The
+log has columns screen,path,label,save,ts: one "best" row per selected photo,
+or one "none"/"unsure" row with an empty path. Every save gets a new save
+number and replaces the screen's earlier answer.
 """
 
 import argparse
@@ -83,37 +87,49 @@ PICK_PAGE = """<!doctype html><meta charset="utf-8"><title>pick the best</title>
  .c{position:relative;cursor:pointer;border:4px solid transparent;border-radius:6px}
  .c.sel{border-color:#fc6} .c img{display:block;max-height:42vh;max-width:30vw}
  .n{position:absolute;top:4px;left:4px;background:#000c;padding:2px 8px;border-radius:4px;font-weight:700}
+ .c.sel .n{background:#fc6;color:#111}
  kbd{background:#333;border-radius:4px;padding:1px 6px;margin:0 2px}
 </style>
 <div id="q"></div><div id="bar"></div><div id="lab"></div><div id="grid"></div>
-<div><kbd>1</kbd>-<kbd>9</kbd>,<kbd>0</kbd> or click = best <kbd>N</kbd> none readable <kbd>U</kbd> unsure
- &nbsp; <kbd>&larr;</kbd>/<kbd>Z</kbd> back <kbd>&rarr;</kbd> forward <kbd>F</kbd> first unpicked</div>
+<div><kbd>1</kbd>-<kbd>9</kbd>,<kbd>0</kbd> or click = select/unselect <kbd>W</kbd> write (save) selection
+ <kbd>N</kbd> none readable <kbd>U</kbd> unsure &nbsp; <kbd>&larr;</kbd>/<kbd>Z</kbd> back
+ <kbd>&rarr;</kbd> forward <kbd>F</kbd> first unpicked</div>
 <script>
-let i=null, frontier=0, cur=null;
+let i=null, frontier=0, cur=null, sel=new Set();
+function draw(){
+  document.querySelectorAll('.c').forEach((c,k)=>c.classList.toggle('sel',sel.has(cur.paths[k])));
+  const s=[...sel].map(p=>cur.paths.indexOf(p)+1).sort((a,b)=>a-b);
+  document.getElementById('lab').textContent=s.length?'selected: '+s.join(', ')+'  (W to save)':
+    (cur.label&&cur.label!=='best'?'saved: '+cur.label:'');
+}
 async function load(n){
   const r=await (await fetch('/album?i='+n)).json();
   document.getElementById('q').textContent=r.question;
   i=r.i; frontier=r.frontier; cur=r;
   const g=document.getElementById('grid'); g.innerHTML='';
-  if(r.done){document.getElementById('bar').textContent='All '+r.total+' albums picked.';
+  if(r.done){document.getElementById('bar').textContent='All '+r.total+' screens answered.';
     document.getElementById('lab').textContent='';cur=null;return;}
+  sel=new Set(r.picks);
   r.paths.forEach((p,k)=>{
-    const c=document.createElement('div'); c.className='c'+(r.pick===p?' sel':'');
+    const c=document.createElement('div'); c.className='c';
     c.innerHTML='<span class="n">'+(k+1)+'</span>';
     const img=document.createElement('img'); img.src='/img/'+encodeURIComponent(p);
-    c.appendChild(img); c.onclick=()=>send(p,'best'); g.appendChild(c);});
-  document.getElementById('bar').textContent=
-    r.labeled+' / '+r.total+' albums   #'+(r.i+1)+'   album '+r.album+'   '+r.paths.length+' photos';
-  document.getElementById('lab').textContent=r.pick?'current: '+(r.pick.includes('/')?
-    'photo '+(r.paths.indexOf(r.pick)+1):r.pick):'';
+    c.appendChild(img); c.onclick=()=>toggle(k); g.appendChild(c);});
+  document.getElementById('bar').textContent=r.labeled+' / '+r.total+' screens   #'+(r.i+1)+
+    '   '+r.screen+(r.note?'  ('+r.note+')':'')+'   '+r.paths.length+' photos';
+  draw();
 }
-async function send(path,label){ if(!cur)return;
-  await fetch('/pick',{method:'POST',body:JSON.stringify({album:cur.album,path:path,label:label})});
+function toggle(k){ const p=cur.paths[k]; sel.has(p)?sel.delete(p):sel.add(p); draw(); }
+async function send(label){ if(!cur)return;
+  const paths=label==='best'?[...sel]:[];
+  if(label==='best'&&!paths.length)return;
+  await fetch('/pick',{method:'POST',body:JSON.stringify({screen:cur.screen,paths:paths,label:label})});
   load(i<frontier? i+1 : -1); }
 document.addEventListener('keydown',e=>{
   const k=e.key.toLowerCase();
-  if(cur&&/^[0-9]$/.test(k)){const n=k==='0'?9:+k-1; if(n<cur.paths.length)send(cur.paths[n],'best');}
-  else if(k==='n')send(null,'none'); else if(k==='u')send(null,'unsure');
+  if(cur&&/^[0-9]$/.test(k)){const n=k==='0'?9:+k-1; if(n<cur.paths.length)toggle(n);}
+  else if(k==='w'||k==='enter')send('best');
+  else if(k==='n')send('none'); else if(k==='u')send('unsure');
   else if(k==='arrowleft'||k==='z')load(Math.max(0,i-1));
   else if(k==='arrowright')load(i+1);
   else if(k==='f')load(-1);});
@@ -165,33 +181,61 @@ class State:
             w.writerow([path, label, dt.datetime.now().isoformat(timespec="seconds")])
 
 
-class PickState(State):
-    """One screen per album; the label log holds the picked path per album."""
+class PickState:
+    """One screen per watch; the log keeps the latest saved selection per screen."""
 
     def __init__(self, args):
-        super().__init__(args)
-        self.albums = []
-        for p in self.queue:
-            album = p.split("/")[0]
-            if not self.albums or self.albums[-1][0] != album:
-                self.albums.append((album, []))
-            self.albums[-1][1].append(p)
-        self.picked = {}
+        self.root = args.photos_dir
+        self.labels_path = args.labels
+        self.question = args.question
+        self.screens, self.notes = [], {}
+        with open(args.paths) as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                path, _, screen = line.rstrip("\n").partition("\t")
+                screen = screen or path.split("/")[0]
+                if not self.screens or self.screens[-1][0] != screen:
+                    self.screens.append((screen, []))
+                self.screens[-1][1].append(path)
+        self.paths = dict(self.screens)
+        album_screens = {}
+        for screen, _ in self.screens:
+            album_screens.setdefault(screen.rstrip("abcdefghij"), []).append(screen)
+        for album, group in album_screens.items():
+            for n, screen in enumerate(group):
+                if len(group) > 1:
+                    self.notes[screen] = f"watch {n + 1} of {len(group)} in album {album}"
+        self.answers, self.save = {}, 0
         if os.path.exists(self.labels_path):
             with open(self.labels_path, newline="") as f:
-                for row in csv.DictReader(f):  # last row per album wins
-                    path, label = row["path"], row["label"]
-                    self.picked[path.split("/")[0]] = path if label == "best" else label
+                for row in csv.DictReader(f):
+                    save = int(row["save"])
+                    self.save = max(self.save, save)
+                    prev = self.answers.get(row["screen"])
+                    if prev is None or save > prev["save"]:
+                        prev = self.answers[row["screen"]] = {"save": save, "label": row["label"],
+                                                              "paths": []}
+                    if save == prev["save"] and row["path"]:
+                        prev["paths"].append(row["path"])
 
     def frontier(self):
-        for n, (album, _) in enumerate(self.albums):
-            if album not in self.picked:
+        for n, (screen, _) in enumerate(self.screens):
+            if screen not in self.answers:
                 return n
-        return len(self.albums)
+        return len(self.screens)
 
-    def pick(self, album, path, label):
-        self.picked[album] = path if label == "best" else label
-        self.label(path if label == "best" else album + "/", label)
+    def pick(self, screen, paths, label):
+        self.save += 1
+        self.answers[screen] = {"save": self.save, "label": label, "paths": list(paths)}
+        new = not os.path.exists(self.labels_path)
+        ts = dt.datetime.now().isoformat(timespec="seconds")
+        with open(self.labels_path, "a", newline="") as f:
+            w = csv.writer(f)
+            if new:
+                w.writerow(["screen", "path", "label", "save", "ts"])
+            for path in (paths or [""]):
+                w.writerow([screen, path, label, self.save, ts])
 
 
 def make_handler(state):
@@ -219,12 +263,14 @@ def make_handler(state):
                 want = int(qs.get("i", ["-1"])[0])
                 frontier = state.frontier()
                 i = frontier if want < 0 or want > frontier else want
-                done = i >= len(state.albums)
-                album, paths = (None, []) if done else state.albums[i]
-                self._json({"i": i, "frontier": frontier, "done": done, "album": album,
-                            "paths": paths, "pick": state.picked.get(album),
-                            "question": state.question, "labeled": len(state.picked),
-                            "total": len(state.albums)})
+                done = i >= len(state.screens)
+                screen, paths = (None, []) if done else state.screens[i]
+                answer = state.answers.get(screen, {})
+                self._json({"i": i, "frontier": frontier, "done": done, "screen": screen,
+                            "note": state.notes.get(screen), "paths": paths,
+                            "picks": answer.get("paths", []), "label": answer.get("label"),
+                            "question": state.question, "labeled": len(state.answers),
+                            "total": len(state.screens)})
             elif self.path.startswith("/item"):
                 qs = parse_qs(urlparse(self.path).query)
                 want = int(qs.get("i", ["-1"])[0])
@@ -265,11 +311,12 @@ def make_handler(state):
                 self._json({"ok": True})
             elif pick_mode and self.path == "/pick":
                 req = json.loads(body)
-                album, path, label = req.get("album"), req.get("path"), req.get("label")
-                paths = dict(state.albums).get(album)
-                if paths is not None and (label in ("none", "unsure")
-                                          or (label == "best" and path in paths)):
-                    state.pick(album, path, label)
+                screen, picks, label = req.get("screen"), req.get("paths") or [], req.get("label")
+                allowed = state.paths.get(screen)
+                if allowed is not None and (
+                        (label in ("none", "unsure") and not picks)
+                        or (label == "best" and picks and set(picks) <= set(allowed))):
+                    state.pick(screen, sorted(set(picks)), label)
                 self._json({"ok": True})
             else:
                 self.send_response(404)
@@ -295,12 +342,13 @@ def main():
     if args.pick and not args.paths:
         parser.error("--pick needs --paths")
     if args.pick and args.question == parser.get_default("question"):
-        args.question = "Which photo gives the clearest, most readable view of the dial?"
+        args.question = ("Select the clearest, most readable dial photo — one per distinct "
+                         "watch on this screen")
 
     if args.pick:
         state = PickState(args)
-        print(f"queue: {len(state.albums)} albums ({len(state.albums) - len(state.picked)}"
-              f" unpicked) -> http://127.0.0.1:{args.port}", flush=True)
+        print(f"queue: {len(state.screens)} screens ({len(state.screens) - len(state.answers)}"
+              f" unanswered) -> http://127.0.0.1:{args.port}", flush=True)
     else:
         state = State(args)
         print(f"queue: {len(state.queue)} photos ({len(state.queue) - len(state.labeled)}"

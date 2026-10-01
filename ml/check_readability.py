@@ -25,7 +25,13 @@ from PIL import Image, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from detect_dials import box_stats, detect, load_detector  # noqa: E402
-from rank_dials import WEIGHTS, features, score  # noqa: E402
+from rank_dials import features, score  # noqa: E402
+
+# The multi-term score this check exercises: each degradation should move its own
+# term. rank_dials.py now ranks by closeness alone by default (human picks showed
+# the other terms add nothing), but the terms remain available as options.
+TERM_WEIGHTS = {"close": 0.40, "front": 0.20, "center": 0.15, "sharp": 0.15, "clear": 0.10,
+                "cut": 0.50, "weak": 0.50}
 
 EXPECT = {  # degradation -> the term that should drop (or flag that should rise)
     "far": "closeness", "off_center": "centered", "oblique": "frontal",
@@ -124,7 +130,7 @@ def main():
     print(f"  {'degradation':12s} {'native sharpness':>17s} {'256px sharpness':>16s}   expected term moved")
     results = {}
     for sharp in ("sharpness", "sharpness_256"):
-        results[sharp] = score(d.copy(), WEIGHTS, args.min_det, sharp)
+        results[sharp] = score(d.copy(), TERM_WEIGHTS, args.min_det, sharp)
     for kind, term in EXPECT.items():
         line = f"  {kind:12s}"
         for sharp in ("sharpness", "sharpness_256"):

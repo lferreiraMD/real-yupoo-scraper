@@ -18,5 +18,9 @@ album_dials.parquet
 dial_boxes*/
 dial_readability.parquet
 best_dial.parquet
+best_dial_final.parquet
+watches.parquet
+album_watches.parquet
+*.before-sync
 *_labels.csv
 *_paths.txt
