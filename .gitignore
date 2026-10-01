@@ -15,5 +15,8 @@ dial_set.parquet
 dial_set_svm.parquet
 photos_dial.parquet
 album_dials.parquet
+dial_boxes*/
+dial_readability.parquet
+best_dial.parquet
 *_labels.csv
 *_paths.txt

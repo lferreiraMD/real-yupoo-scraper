@@ -12,6 +12,16 @@ Any item can be revisited and relabeled: the CSV is an append-only log
 the same way, so fixes are just newer rows. Restart-safe; sampling is
 stratified (--per-album per album) and shuffled with a fixed seed, so the
 queue order is stable across restarts.
+
+Pick mode shows all candidate photos of one album side by side and records
+the best one (rank_dials.py --pick-queue writes such a queue):
+
+    python3 ml/label_app.py photos_big --pick --paths pick_paths.txt --labels pick_labels.csv
+
+Consecutive paths from the same album form one screen. Keys: 1-9 (and 0 for
+the 10th) or a click picks a photo, N = none of them shows the dial readably,
+U = unsure; arrows/Z/F navigate as above. Each pick is logged as
+(path,best,ts); N and U are logged as (ALBUM_ID/,none|unsure,ts).
 """
 
 import argparse
@@ -65,6 +75,51 @@ document.addEventListener('keydown',e=>{
 load(-1);
 </script>"""
 
+PICK_PAGE = """<!doctype html><meta charset="utf-8"><title>pick the best</title>
+<style>
+ body{margin:0;background:#111;color:#eee;font:16px system-ui;text-align:center}
+ #q{margin:10px;font-size:20px} #bar{margin:6px;color:#9a9} #lab{min-height:22px;color:#fc6;font-weight:600}
+ #grid{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:8px}
+ .c{position:relative;cursor:pointer;border:4px solid transparent;border-radius:6px}
+ .c.sel{border-color:#fc6} .c img{display:block;max-height:42vh;max-width:30vw}
+ .n{position:absolute;top:4px;left:4px;background:#000c;padding:2px 8px;border-radius:4px;font-weight:700}
+ kbd{background:#333;border-radius:4px;padding:1px 6px;margin:0 2px}
+</style>
+<div id="q"></div><div id="bar"></div><div id="lab"></div><div id="grid"></div>
+<div><kbd>1</kbd>-<kbd>9</kbd>,<kbd>0</kbd> or click = best <kbd>N</kbd> none readable <kbd>U</kbd> unsure
+ &nbsp; <kbd>&larr;</kbd>/<kbd>Z</kbd> back <kbd>&rarr;</kbd> forward <kbd>F</kbd> first unpicked</div>
+<script>
+let i=null, frontier=0, cur=null;
+async function load(n){
+  const r=await (await fetch('/album?i='+n)).json();
+  document.getElementById('q').textContent=r.question;
+  i=r.i; frontier=r.frontier; cur=r;
+  const g=document.getElementById('grid'); g.innerHTML='';
+  if(r.done){document.getElementById('bar').textContent='All '+r.total+' albums picked.';
+    document.getElementById('lab').textContent='';cur=null;return;}
+  r.paths.forEach((p,k)=>{
+    const c=document.createElement('div'); c.className='c'+(r.pick===p?' sel':'');
+    c.innerHTML='<span class="n">'+(k+1)+'</span>';
+    const img=document.createElement('img'); img.src='/img/'+encodeURIComponent(p);
+    c.appendChild(img); c.onclick=()=>send(p,'best'); g.appendChild(c);});
+  document.getElementById('bar').textContent=
+    r.labeled+' / '+r.total+' albums   #'+(r.i+1)+'   album '+r.album+'   '+r.paths.length+' photos';
+  document.getElementById('lab').textContent=r.pick?'current: '+(r.pick.includes('/')?
+    'photo '+(r.paths.indexOf(r.pick)+1):r.pick):'';
+}
+async function send(path,label){ if(!cur)return;
+  await fetch('/pick',{method:'POST',body:JSON.stringify({album:cur.album,path:path,label:label})});
+  load(i<frontier? i+1 : -1); }
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(cur&&/^[0-9]$/.test(k)){const n=k==='0'?9:+k-1; if(n<cur.paths.length)send(cur.paths[n],'best');}
+  else if(k==='n')send(null,'none'); else if(k==='u')send(null,'unsure');
+  else if(k==='arrowleft'||k==='z')load(Math.max(0,i-1));
+  else if(k==='arrowright')load(i+1);
+  else if(k==='f')load(-1);});
+load(-1);
+</script>"""
+
 
 class State:
     def __init__(self, args):
@@ -110,7 +165,38 @@ class State:
             w.writerow([path, label, dt.datetime.now().isoformat(timespec="seconds")])
 
 
+class PickState(State):
+    """One screen per album; the label log holds the picked path per album."""
+
+    def __init__(self, args):
+        super().__init__(args)
+        self.albums = []
+        for p in self.queue:
+            album = p.split("/")[0]
+            if not self.albums or self.albums[-1][0] != album:
+                self.albums.append((album, []))
+            self.albums[-1][1].append(p)
+        self.picked = {}
+        if os.path.exists(self.labels_path):
+            with open(self.labels_path, newline="") as f:
+                for row in csv.DictReader(f):  # last row per album wins
+                    path, label = row["path"], row["label"]
+                    self.picked[path.split("/")[0]] = path if label == "best" else label
+
+    def frontier(self):
+        for n, (album, _) in enumerate(self.albums):
+            if album not in self.picked:
+                return n
+        return len(self.albums)
+
+    def pick(self, album, path, label):
+        self.picked[album] = path if label == "best" else label
+        self.label(path if label == "best" else album + "/", label)
+
+
 def make_handler(state):
+    pick_mode = isinstance(state, PickState)
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
@@ -127,7 +213,18 @@ def make_handler(state):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(PAGE.encode())
+                self.wfile.write((PICK_PAGE if pick_mode else PAGE).encode())
+            elif pick_mode and self.path.startswith("/album"):
+                qs = parse_qs(urlparse(self.path).query)
+                want = int(qs.get("i", ["-1"])[0])
+                frontier = state.frontier()
+                i = frontier if want < 0 or want > frontier else want
+                done = i >= len(state.albums)
+                album, paths = (None, []) if done else state.albums[i]
+                self._json({"i": i, "frontier": frontier, "done": done, "album": album,
+                            "paths": paths, "pick": state.picked.get(album),
+                            "question": state.question, "labeled": len(state.picked),
+                            "total": len(state.albums)})
             elif self.path.startswith("/item"):
                 qs = parse_qs(urlparse(self.path).query)
                 want = int(qs.get("i", ["-1"])[0])
@@ -166,6 +263,14 @@ def make_handler(state):
                         and req.get("path") in state.queue_set):
                     state.label(req["path"], req["label"])
                 self._json({"ok": True})
+            elif pick_mode and self.path == "/pick":
+                req = json.loads(body)
+                album, path, label = req.get("album"), req.get("path"), req.get("label")
+                paths = dict(state.albums).get(album)
+                if paths is not None and (label in ("none", "unsure")
+                                          or (label == "best" and path in paths)):
+                    state.pick(album, path, label)
+                self._json({"ok": True})
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -183,12 +288,23 @@ def main():
     parser.add_argument("--paths", default=None,
                         help="file of photo paths (one per line) to use as the "
                              "queue verbatim — audit mode, overrides sampling")
+    parser.add_argument("--pick", action="store_true",
+                        help="pick the best photo per album (needs --paths)")
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
+    if args.pick and not args.paths:
+        parser.error("--pick needs --paths")
+    if args.pick and args.question == parser.get_default("question"):
+        args.question = "Which photo gives the clearest, most readable view of the dial?"
 
-    state = State(args)
-    print(f"queue: {len(state.queue)} photos ({len(state.queue) - len(state.labeled)}"
-          f" unlabeled) -> http://127.0.0.1:{args.port}", flush=True)
+    if args.pick:
+        state = PickState(args)
+        print(f"queue: {len(state.albums)} albums ({len(state.albums) - len(state.picked)}"
+              f" unpicked) -> http://127.0.0.1:{args.port}", flush=True)
+    else:
+        state = State(args)
+        print(f"queue: {len(state.queue)} photos ({len(state.queue) - len(state.labeled)}"
+              f" unlabeled) -> http://127.0.0.1:{args.port}", flush=True)
     HTTPServer(("127.0.0.1", args.port), make_handler(state)).serve_forever()
 
 
