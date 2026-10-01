@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tiny local web app for yes/no/lume labeling of downloaded photos. Stdlib only.
+"""Tiny local web app for yes/no/lume labeling of downloaded marketing photos. Stdlib only.
 
     python3 ml/label_app.py photos_big --question "Is the dial clearly visible?"
 

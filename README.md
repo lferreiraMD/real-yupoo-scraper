@@ -1,6 +1,6 @@
 # real-yupoo-scraper
 
-Downloads every photo and video from a public Yupoo album at original quality. One file, standard library only, Python 3.8+. No accounts, no API keys, no cloud services.
+Downloads every photo and video from a public album at original quality. One file, standard library only, Python 3.8+. No accounts, no API keys, no cloud services.
 
 Yupoo serves full-resolution originals (the same files the seller uploaded, EXIF intact), but rejects any request without a `Referer` header from the album's own domain. That header is the entire trick; everything else here is parsing and bookkeeping.
 
