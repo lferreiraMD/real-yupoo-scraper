@@ -9,3 +9,6 @@ numpy
 pandas
 pyarrow
 scikit-learn
+# cluster_photos.py
+umap-learn
+matplotlib
