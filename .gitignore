@@ -26,3 +26,5 @@ album_watches.parquet
 *_paths.txt
 best_dial_final.csv
 best_photos/
+photo_clusters.csv
+plots/
